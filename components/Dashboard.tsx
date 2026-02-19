@@ -60,7 +60,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, onOpenBOQ, logs }) => {
     },
     {
       label: 'Completed',
-      basis: 'Claim Amount',
+      basis: 'Estimate Amount',
       amount: records.filter(r => r.worksStatus === 'Completed').reduce((sum, r) => sum + r.totals.claim, 0),
       color: 'indigo'
     },
