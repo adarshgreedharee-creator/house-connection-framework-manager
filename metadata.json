@@ -1,0 +1,8 @@
+
+{
+  "name": "House Connection Framework Manager",
+  "description": "A comprehensive tool for managing house connections, surveys, feasibility reports, and bill of quantities (BOQ) with real-time multi-user simulation and export capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
