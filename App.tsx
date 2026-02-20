@@ -1,7 +1,8 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { HouseConnectionRecord, User, ActivityLog } from './types';
 import { STORAGE_KEY } from './constants';
+import { saveFrameworkState, loadFrameworkState, HCFrameworkState } from './utils';
+
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import MainTable from './components/MainTable';
@@ -9,11 +10,13 @@ import BOQManager from './components/BOQManager';
 import ExportTool from './components/ExportTool';
 import AuditTrail from './components/AuditTrail';
 import Sidebar from './components/Sidebar';
+
 import { RefreshCw, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState<'dash' | 'main' | 'boq' | 'export' | 'audit'>('dash');
+  const [activeTab, setActiveTab] =
+    useState<'dash' | 'main' | 'boq' | 'export' | 'audit'>('dash');
   const [records, setRecords] = useState<HouseConnectionRecord[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -21,89 +24,142 @@ const App: React.FC = () => {
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
   const [zoomLevel, setZoomLevel] = useState(100);
 
+  // 🚀 New: backend loading flag
+  const [isLoadingData, setIsLoadingData] = useState(false);
+
   // Sync Channel for real-time simulation across browser tabs
   const syncChannel = useRef<BroadcastChannel | null>(null);
 
+  // 1) Setup BroadcastChannel listeners
   useEffect(() => {
-    syncChannel.current = new BroadcastChannel('hc_framework_sync');
-    
-    syncChannel.current.onmessage = (event) => {
-      const { type, payload } = event.data;
+    const channel = new BroadcastChannel('hc_framework_sync');
+    syncChannel.current = channel;
+
+    channel.onmessage = (event: MessageEvent) => {
+      const { type, payload } = event.data || {};
+
       if (type === 'DATA_UPDATE') {
-        setRecords(payload.records);
-        setActivities(payload.activities);
+        setRecords(payload.records || []);
+        setActivities(payload.activities || []);
         setIsSyncing(true);
         setTimeout(() => setIsSyncing(false), 500);
       } else if (type === 'USER_PING') {
-        setOnlineUsers(prev => {
-          const exists = prev.find(u => u.username === payload.username);
-          if (exists) return prev;
+        setOnlineUsers((prev) => {
+          if (prev.some((u) => u.username === payload.username)) return prev;
           return [...prev, payload];
         });
       }
     };
 
-    return () => syncChannel.current?.close();
+    return () => channel.close();
   }, []);
 
-  // Broadcast user presence
+  // 2) Broadcast user presence
   useEffect(() => {
-    if (user) {
-      const ping = () => syncChannel.current?.postMessage({ type: 'USER_PING', payload: user });
-      ping();
-      const interval = setInterval(ping, 5000);
-      return () => clearInterval(interval);
-    }
+    if (!user || !syncChannel.current) return;
+
+    const ping = () =>
+      syncChannel.current?.postMessage({ type: 'USER_PING', payload: user });
+
+    ping();
+    const interval = setInterval(ping, 5000);
+    return () => clearInterval(interval);
   }, [user]);
 
-  // Load initial data
+  // 3) Load initial local data (localStorage + user session)
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    const savedActivities = localStorage.getItem(STORAGE_KEY + '_logs');
-    if (saved) {
-      try { setRecords(JSON.parse(saved)); } catch (e) { console.error(e); }
-    }
-    if (savedActivities) {
-      try { setActivities(JSON.parse(savedActivities)); } catch (e) { console.error(e); }
-    }
-    
-    const session = localStorage.getItem('hc_user_session');
-    if (session) {
-      setUser(JSON.parse(session));
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      const savedActivities = localStorage.getItem(STORAGE_KEY + '_logs');
+      const session = localStorage.getItem('hc_user_session');
+
+      if (saved) {
+        setRecords(JSON.parse(saved));
+      }
+      if (savedActivities) {
+        setActivities(JSON.parse(savedActivities));
+      }
+      if (session) {
+        setUser(JSON.parse(session));
+      }
+    } catch (e) {
+      console.error('Error loading local data', e);
     }
   }, []);
 
-  const updateRecords = useCallback((newRecords: HouseConnectionRecord[], logEntry?: Partial<ActivityLog>) => {
-    setRecords(newRecords);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newRecords));
+  // 4) 🔄 Load shared data from backend after login
+  useEffect(() => {
+    if (!user) return;
 
-    if (logEntry && user) {
-      const newLog: ActivityLog = {
-        id: Math.random().toString(36).substr(2, 9),
-        user: user.username,
-        action: logEntry.action || 'updated record',
-        timestamp: new Date().toISOString(),
-        targetRef: logEntry.targetRef
-      };
-      const updatedLogs = [newLog, ...activities].slice(0, 100);
-      setActivities(updatedLogs);
-      localStorage.setItem(STORAGE_KEY + '_logs', JSON.stringify(updatedLogs));
-      
-      syncChannel.current?.postMessage({ 
-        type: 'DATA_UPDATE', 
-        payload: { records: newRecords, activities: updatedLogs } 
-      });
-    } else {
-      syncChannel.current?.postMessage({ 
-        type: 'DATA_UPDATE', 
-        payload: { records: newRecords, activities } 
-      });
+    setIsLoadingData(true);
+
+    async function syncFromBackend() {
+      try {
+        const loaded: HCFrameworkState | null = await loadFrameworkState();
+
+        if (loaded && (loaded as any).records && (loaded as any).activities) {
+          const nextRecords = (loaded as any).records as HouseConnectionRecord[];
+          const nextActivities = (loaded as any).activities as ActivityLog[];
+
+          setRecords(nextRecords);
+          setActivities(nextActivities);
+
+          // refresh localStorage so offline still works
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRecords));
+          localStorage.setItem(
+            STORAGE_KEY + '_logs',
+            JSON.stringify(nextActivities),
+          );
+        } else {
+          console.log('No shared backend data yet, keeping local data.');
+        }
+      } catch (err) {
+        console.error('Error loading framework state from backend', err);
+      } finally {
+        setIsLoadingData(false);
+      }
     }
-    
-    setIsSyncing(true);
-    setTimeout(() => setIsSyncing(false), 800);
-  }, [activities, user]);
 
+    syncFromBackend();
+  }, [user]);
+
+  // 5) Update records + logs + broadcast to other tabs
+  const updateRecords = useCallback(
+    (newRecords: HouseConnectionRecord[], logEntry?: Partial<ActivityLog>) => {
+      setRecords(newRecords);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newRecords));
+
+      let nextActivities = activities;
+
+      if (logEntry && user) {
+        const newLog: ActivityLog = {
+          id: Math.random().toString(36).substr(2, 9),
+          user: user.username,
+          action: logEntry.action || 'updated record',
+          timestamp: new Date().toISOString(),
+          targetRef: logEntry.targetRef,
+        };
+
+        nextActivities = [newLog, ...activities].slice(0, 100);
+        setActivities(nextActivities);
+        localStorage.setItem(
+          STORAGE_KEY + '_logs',
+          JSON.stringify(nextActivities),
+        );
+      }
+
+      syncChannel.current?.postMessage({
+        type: 'DATA_UPDATE',
+        payload: { records: newRecords, activities: nextActivities },
+      });
+
+      setIsSyncing(true);
+      setTimeout(() => setIsSyncing(false), 800);
+    },
+    [activities, user],
+  );
+
+  // 6) Auth handlers
   const handleLogin = (u: User) => {
     setUser(u);
     localStorage.setItem('hc_user_session', JSON.stringify(u));
@@ -114,24 +170,53 @@ const App: React.FC = () => {
     localStorage.removeItem('hc_user_session');
   };
 
+  // 7) BOQ navigation
   const handleOpenBOQ = (ref: string) => {
     setSelectedRef(ref);
     setActiveTab('boq');
   };
 
+  // 8) Zoom controls
   const handleZoom = (delta: number) => {
-    setZoomLevel(prev => Math.min(Math.max(prev + delta, 70), 130));
+    setZoomLevel((prev) => Math.min(Math.max(prev + delta, 70), 130));
   };
 
+  // 9) 💾 Save handler → sends { records, activities } to backend
+  const handleSave = async () => {
+    try {
+      const stateToSave: HCFrameworkState = {
+        records,
+        activities,
+      } as any;
+
+      await saveFrameworkState(stateToSave);
+      alert('Data saved successfully and will be visible to all users.');
+    } catch (err) {
+      console.error('Save failed', err);
+      alert('Save failed. Please try again.');
+    }
+  };
+
+  // 10) Logged-out view
   if (!user) {
     return <Login onLogin={handleLogin} />;
   }
 
+  // 11) Show loading screen right after login while backend syncs
+  if (isLoadingData) {
+    return (
+      <div className="w-screen h-screen flex items-center justify-center text-slate-700 text-sm">
+        Loading shared data...
+      </div>
+    );
+  }
+
+  // 12) Main application layout
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden">
-      <Sidebar 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex">
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
         onLogout={handleLogout}
         user={user}
         onlineUsers={onlineUsers}
@@ -139,109 +224,119 @@ const App: React.FC = () => {
         setRecords={updateRecords}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-white border-b flex items-center justify-between px-8 shrink-0 z-10">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-slate-800">
+      <main
+        className="flex-1 flex flex-col"
+        style={{ fontSize: `${zoomLevel}%` }}
+      >
+        {/* Top header */}
+        <header className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+          <div className="flex flex-col">
+            <h1 className="text-xs font-bold tracking-[0.25em] text-slate-400 uppercase">
+              HC Framework Manager
+            </h1>
+            <p className="text-lg font-black tracking-tight">
               {activeTab === 'dash' && 'Cloud Dashboard'}
               {activeTab === 'main' && 'Live Register'}
               {activeTab === 'boq' && 'Quantity Manager'}
               {activeTab === 'export' && 'Reporting Engine'}
               {activeTab === 'audit' && 'System Audit Logs'}
-            </h1>
+            </p>
+
             {isSyncing && (
-              <div className="flex items-center gap-2 text-blue-600 text-sm font-medium">
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Live Sync
+              <div className="mt-1 inline-flex items-center gap-2 text-[10px] text-emerald-400">
+                <RefreshCw className="w-3 h-3 animate-spin" />
+                <span>Live Sync</span>
               </div>
             )}
           </div>
-          
-          <div className="flex items-center gap-6">
-            {/* Zoom Controls */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-              <button 
-                onClick={() => handleZoom(-10)} 
-                className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-500 hover:text-blue-600"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-4 h-4" />
-              </button>
-              <div className="px-2 text-[10px] font-black text-slate-400 w-12 text-center uppercase">
-                {zoomLevel}%
-              </div>
-              <button 
-                onClick={() => handleZoom(10)} 
-                className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-500 hover:text-blue-600"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-4 h-4" />
-              </button>
-              <div className="w-px h-4 bg-slate-200 mx-1" />
-              <button 
-                onClick={() => setZoomLevel(100)} 
-                className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-500 hover:text-blue-600"
-                title="Reset Zoom"
-              >
-                <Maximize className="w-4 h-4" />
-              </button>
-            </div>
 
-            <div className="flex -space-x-2">
-               {onlineUsers.slice(0, 3).map((u, i) => (
-                 <div key={i} title={`${u.username} (${u.role})`} className="w-8 h-8 rounded-full border-2 border-white bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-600 uppercase">
-                   {u.username.charAt(0)}
-                 </div>
-               ))}
-            </div>
-            <div className="h-8 w-px bg-slate-200" />
-            <div className="flex items-center gap-3">
-              <div className="text-right hidden lg:block">
-                <div className="text-sm font-semibold text-slate-700">{user.username}</div>
-                <div className="text-[10px] text-slate-400 uppercase font-black tracking-widest leading-none">{user.role}</div>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black shadow-lg shadow-blue-600/20 uppercase">
-                {user.username.charAt(0)}
+          <div className="flex items-center gap-4">
+            {/* Zoom controls */}
+            <button
+              onClick={() => handleZoom(-10)}
+              className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-500 hover:text-blue-600"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <span className="text-xs font-mono w-10 text-center">
+              {zoomLevel}%
+            </span>
+            <button
+              onClick={() => handleZoom(10)}
+              className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-500 hover:text-blue-600"
+              title="Zoom In"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setZoomLevel(100)}
+              className="p-1.5 hover:bg-white rounded-lg transition-colors text-slate-500 hover:text-blue-600"
+              title="Reset Zoom"
+            >
+              <Maximize className="w-4 h-4" />
+            </button>
+
+            {/* 💾 New Save button (wires to handleSave) */}
+            <button
+              onClick={handleSave}
+              className="ml-4 px-4 py-2 rounded-xl bg-emerald-500 text-xs font-black uppercase tracking-[0.2em] hover:bg-emerald-400 active:scale-95 transition-all"
+            >
+              Save
+            </button>
+
+            {/* Online users + current user */}
+            <div className="flex items-center gap-2 ml-4">
+              {onlineUsers.slice(0, 3).map((u, i) => (
+                <div
+                  key={u.username + i}
+                  className="w-7 h-7 rounded-full bg-blue-600 text-[11px] font-black flex items-center justify-center text-white border border-slate-900 -ml-2 first:ml-0"
+                  title={u.username}
+                >
+                  {u.username.charAt(0)}
+                </div>
+              ))}
+              <div className="ml-3 text-right">
+                <div className="text-xs font-bold">{user.username}</div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-[0.2em]">
+                  {user.role}
+                </div>
               </div>
             </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto">
-          <div 
-            className="p-8 transition-transform duration-200 origin-top-left"
-            style={{ 
-              transform: `scale(${zoomLevel / 100})`, 
-              width: `${100 / (zoomLevel / 100)}%`,
-              minWidth: '100%' 
-            }}
-          >
-            {activeTab === 'dash' && (
-              <Dashboard records={records} onOpenBOQ={handleOpenBOQ} logs={activities} />
-            )}
-            {activeTab === 'main' && (
-              <MainTable 
-                records={records} 
-                setRecords={(recs, log) => updateRecords(recs, log)} 
-                onOpenBOQ={handleOpenBOQ}
-              />
-            )}
-            {activeTab === 'boq' && (
-              <BOQManager 
-                records={records} 
-                setRecords={(recs, log) => updateRecords(recs, log)} 
-                initialRef={selectedRef}
-              />
-            )}
-            {activeTab === 'export' && (
-              <ExportTool records={records} />
-            )}
-            {activeTab === 'audit' && (
-              <AuditTrail logs={activities} />
-            )}
-          </div>
-        </main>
-      </div>
+        {/* Tab content */}
+        <section className="flex-1 overflow-auto p-6">
+          {activeTab === 'dash' && (
+            <Dashboard
+              records={records}
+              onOpenBOQ={handleOpenBOQ}
+              logs={activities}
+            />
+          )}
+
+          {activeTab === 'main' && (
+            <MainTable
+              records={records}
+              setRecords={updateRecords}
+              onOpenBOQ={handleOpenBOQ}
+            />
+          )}
+
+          {activeTab === 'boq' && (
+            <BOQManager
+              records={records}
+              setRecords={updateRecords}
+              initialRef={selectedRef}
+            />
+          )}
+
+          {activeTab === 'export' && <ExportTool records={records} />}
+
+          {activeTab === 'audit' && <AuditTrail logs={activities} />}
+        </section>
+      </main>
     </div>
   );
 };
