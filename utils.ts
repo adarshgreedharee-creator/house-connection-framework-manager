@@ -1,3 +1,49 @@
+// utils.ts
+
+// 1. Backend URL – paste your Apps Script Web App URL here:
+const BACKEND_URL = https://script.google.com/macros/s/AKfycbyXb8A2kNEXxewmN8pyjpcY_1WUaCjkdBP3EC8mnzdGg1wnG2um2Mao2SP5rnQGugAg_g/exec;
+
+// 2. This is the shared framework state structure we persist.
+export type HCFrameworkState = any;
+
+// 3. Save the whole framework state to Google Sheets backend
+export async function saveFrameworkState(state: HCFrameworkState): Promise<void> {
+  const response = await fetch(BACKEND_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(state),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Save failed with status ${response.status}`);
+  }
+}
+
+// 4. Load the framework state from Google Sheets backend
+export async function loadFrameworkState(): Promise<HCFrameworkState | null> {
+  try {
+    const response = await fetch(BACKEND_URL);
+    if (!response.ok) {
+      console.error('Backend GET failed', response.status);
+      return null;
+    }
+
+    const text = await response.text();
+    if (!text || text.trim() === '') {
+      // Nothing saved yet
+      return null;
+    }
+
+    return JSON.parse(text);
+  } catch (err) {
+    console.error('Error loading framework state', err);
+    return null;
+  }
+}
+
+// 5. Existing helpers – preserved
 
 export const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-MU', {
@@ -8,9 +54,15 @@ export const formatCurrency = (amount: number) => {
 };
 
 export const safeEval = (expr: string): { ok: boolean; val: number } => {
-  const cleanExpr = expr.replace(/×/g, '*').replace(/[xX]/g, '*').replace(/\s+/g, '');
+  const cleanExpr = expr
+    .replace(/×/g, '*')
+    .replace(/[xX]/g, '*')
+    .replace(/\s+/g, '');
+
   if (!cleanExpr) return { ok: true, val: 0 };
+
   if (!/^[0-9+\-*/().]+$/.test(cleanExpr)) return { ok: false, val: 0 };
+
   try {
     // eslint-disable-next-line no-new-func
     const result = new Function(`return (${cleanExpr})`)();
@@ -35,13 +87,18 @@ export const readFileAsDataURL = (file: File): Promise<string> => {
 export const parseCSV = (text: string): any[] => {
   const lines = text.split(/\r?\n/);
   if (lines.length < 2) return [];
+
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-  return lines.slice(1).filter(line => line.trim()).map(line => {
-    const values = line.split(',');
-    const entry: any = {};
-    headers.forEach((header, i) => {
-      entry[header] = values[i]?.trim() || '';
+
+  return lines
+    .slice(1)
+    .filter(line => line.trim())
+    .map(line => {
+      const values = line.split(',');
+      const entry: any = {};
+      headers.forEach((header, i) => {
+        entry[header] = values[i]?.trim() || '';
+      });
+      return entry;
     });
-    return entry;
-  });
 };
