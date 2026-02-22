@@ -2,44 +2,34 @@
 
 // 1. Backend URL – paste your Apps Script Web App URL here:
 const BACKEND_URL =
-  'https://script.google.com/macros/s/AKfycbwzsMf7cgcwMB21AOIoLrlIfF-0KUAlmplV-ve2A3G_bMjELGlPrf9CKqS3Ebi-lsh8/exec';
+  'https://script.google.com/macros/s/AKfycbyXb8A2kNEXxewmN8pyjpcY_1WUaCjkdBP3EC8mnzdGg1wnG2um2Mao2SP5rnQGugAg_g/exec';
 
-// 2. This is the shared framework state structure we persist.
-export type HCFrameworkState = any;
+export type HCFrameworkState = {
+  records: any[];
+  activities: any[];
+  // add any other state you need (lists/settings/etc)
+};
 
-// 3. Save the whole framework state to Google Sheets backend
-export async function saveFrameworkState(state: HCFrameworkState): Promise<void> {
+// Save the whole framework state to Google Sheets backend
+export async function saveFrameworkState(
+  state: HCFrameworkState,
+): Promise<void> {
   const response = await fetch(BACKEND_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(state),
   });
 
-  if (!response.ok) {
-    throw new Error(`Save failed with status ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`Save failed (${response.status})`);
 }
 
-// 4. Load the framework state from Google Sheets backend
+// Load the framework state from Google Sheets backend
 export async function loadFrameworkState(): Promise<HCFrameworkState | null> {
   try {
-    const response = await fetch(BACKEND_URL);
-    if (!response.ok) {
-      console.error('Backend GET failed', response.status);
-      return null;
-    }
-
-    const text = await response.text();
-    if (!text || text.trim() === '') {
-      // Nothing saved yet
-      return null;
-    }
-
-    return JSON.parse(text);
-  } catch (err) {
-    console.error('Error loading framework state', err);
+    const response = await fetch(BACKEND_URL, { method: 'GET' });
+    if (!response.ok) return null;
+    return (await response.json()) as HCFrameworkState;
+  } catch {
     return null;
   }
 }
