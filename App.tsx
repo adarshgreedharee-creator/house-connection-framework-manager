@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { HouseConnectionRecord, User, ActivityLog } from './types';
+import { HouseConnectionRecord, ActivityLog, User } from './types';
 import { STORAGE_KEY } from './constants';
-import { saveFrameworkState, loadFrameworkState, HCFrameworkState } from './utils';
+import {
+  saveFrameworkState,
+  loadFrameworkState,
+  HCFrameworkState,
+} from './utils';
 
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
