@@ -11,7 +11,11 @@ export default defineConfig(({ mode }) => {
     },
     preview: {
       host: '0.0.0.0',
-      allowedHosts: ['.run.app'],
+      allowedHosts: [
+        'house-connection-framework-manager-v2-634346932278.us-west1.run.app',
+        'localhost',
+        '127.0.0.1'
+      ],
     },
     plugins: [react()],
     define: {
