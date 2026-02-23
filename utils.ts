@@ -1,18 +1,18 @@
 // utils.ts
 
-// 1. Backend URL – paste your Apps Script Web App URL here:
+// 1. Backend URL – your Apps Script Web App endpoint
 const BACKEND_URL =
-  'https://script.google.com/macros/s/AKfycbyXb8A2kNEXxewmN8pyjpcY_1WUaCjkdBP3EC8mnzdGg1wnG2um2Mao2SP5rnQGugAg_g/exec';
+  'https://script.google.com/macros/s/AKfycbwzsMf7cgcwMB21AOIoLrlIfF-0KUAlmplV-ve2A3G_bMjELGlPrf9CKqS3Ebi-lsh8/exec';
 
 export type HCFrameworkState = {
   records: any[];
   activities: any[];
-  // add any other state you need (lists/settings/etc)
+  // add any other top-level state if needed
 };
 
-// Save the whole framework state to Google Sheets backend
+// 2. Save the whole framework state to Google Sheets backend
 export async function saveFrameworkState(
-  state: HCFrameworkState,
+  state: HCFrameworkState
 ): Promise<void> {
   const response = await fetch(BACKEND_URL, {
     method: 'POST',
@@ -20,21 +20,24 @@ export async function saveFrameworkState(
     body: JSON.stringify(state),
   });
 
-  if (!response.ok) throw new Error(`Save failed (${response.status})`);
+  if (!response.ok) {
+    throw new Error(`Save failed (${response.status})`);
+  }
 }
 
-// Load the framework state from Google Sheets backend
+// 3. Load the framework state from Google Sheets backend
 export async function loadFrameworkState(): Promise<HCFrameworkState | null> {
   try {
     const response = await fetch(BACKEND_URL, { method: 'GET' });
     if (!response.ok) return null;
     return (await response.json()) as HCFrameworkState;
-  } catch {
+  } catch (err) {
+    console.error('loadFrameworkState error', err);
     return null;
   }
 }
 
-// 5. Existing helpers – preserved
+// 4. Existing helpers – preserved
 
 export const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-MU', {
@@ -52,7 +55,9 @@ export const safeEval = (expr: string): { ok: boolean; val: number } => {
 
   if (!cleanExpr) return { ok: true, val: 0 };
 
-  if (!/^[0-9+\-*/().]+$/.test(cleanExpr)) return { ok: false, val: 0 };
+  if (!/^[0-9+\-*/().]+$/.test(cleanExpr)) {
+    return { ok: false, val: 0 };
+  }
 
   try {
     // eslint-disable-next-line no-new-func
@@ -79,12 +84,12 @@ export const parseCSV = (text: string): any[] => {
   const lines = text.split(/\r?\n/);
   if (lines.length < 2) return [];
 
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
 
   return lines
     .slice(1)
-    .filter(line => line.trim())
-    .map(line => {
+    .filter((line) => line.trim())
+    .map((line) => {
       const values = line.split(',');
       const entry: any = {};
       headers.forEach((header, i) => {
